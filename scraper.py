@@ -27,23 +27,46 @@ def save_seen(seen):
     with open(SEEN_FILE, "w") as f:
         json.dump(list(seen), f, indent=4)
 
+def clean_title(title, url):
+    # กรณีเจอปุ่ม Read more หรือข้อความว่าง
+    if title.lower() in ["read more", "learn more", ""] or len(title) < 5:
+        basename = url.strip("/").split("/")[-1]
+        return basename.replace("-", " ").title()
+    
+    # กรณีเว็บ Anthropic ดูดเนื้อหากับวันที่มาติดกันจนยาวเกินไป
+    if len(title) > 80:
+        basename = url.strip("/").split("/")[-1]
+        return basename.replace("-", " ").title()
+
+    return title
+
 def scrape_links(source):
     try:
         response = requests.get(source["url"], headers=HEADERS, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
-        links = []
         
-        # หาแท็ก <a> ทั้งหมดที่มี href
+        # ใช้ Dictionary ดักลิงก์ซ้ำในหน้าเดียวกัน
+        link_dict = {}
+        
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            # กรองเอาเฉพาะลิงก์ที่เป็นบทความจริงๆ
             if source["filter"] in href and not href.endswith(source["filter"]):
-                # แปลงเป็น Full URL
                 full_url = href if href.startswith("http") else f"{source['url'].split('/')[0]}//{source['url'].split('/')[2]}{href}"
-                title = a.get_text(strip=True)
-                if title and len(title) > 5: # ตัดพวกลิงก์เปล่าๆ หรือปุ่มสั้นๆ ทิ้ง
-                    links.append((title, full_url))
-        return links
+                
+                # พยายามหา Tag H (Heading) ก่อนเผื่อมีหัวข้อชัดเจน
+                heading = a.find(['h1', 'h2', 'h3', 'h4', 'h5'])
+                raw_title = heading.get_text(strip=True) if heading else a.get_text(strip=True)
+                
+                title = clean_title(raw_title, full_url)
+                
+                # ถ้าเคยดึงลิงก์นี้มาแล้วในลูป ให้เลือกใช้ชื่อข่าวที่ดูดีกว่า
+                if full_url in link_dict:
+                    if len(link_dict[full_url]) < len(title) and title.lower() != "read more":
+                         link_dict[full_url] = title
+                else:
+                    link_dict[full_url] = title
+                    
+        return [(title, link) for link, title in link_dict.items()]
     except Exception as e:
         print(f"Error scraping {source['name']}: {e}")
         return []
@@ -62,11 +85,8 @@ def main():
 
     for name, title, link in new_articles:
         print(f"Found new article: {title}")
-        
-        # กำหนดสี Embed ตามแหล่งที่มา (Anthropic = สีส้มอ่อน, Claude = สีครีม/เทา)
         color = 14392237 if "Anthropic" in name else 15129532 
         
-        # สร้างกล่องข้อความแบบ Embed
         msg = {
             "embeds": [
                 {
@@ -82,7 +102,6 @@ def main():
                 }
             ]
         }
-        
         requests.post(WEBHOOK_URL, json=msg)
 
     if new_articles:
