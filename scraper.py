@@ -2,7 +2,7 @@ import os
 import json
 import requests
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+from google import genai
 
 WEBHOOK_URL = "https://discord.com/api/webhooks/1549121441721753662/fZgMp6em_sJWaftCBRjupJ8KVO1aTPXjrFm8SWB-izx2TjYL3IZzPx-T2UeLGj1so-DB"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -42,8 +42,8 @@ def analyze_news_with_ai(title, url):
         soup = BeautifulSoup(res.text, "html.parser")
         text = " ".join([p.get_text() for p in soup.find_all("p")])[:1500] 
 
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # เรียกใช้งาน SDK ตัวใหม่ของ Google
+        client = genai.Client(api_key=GEMINI_API_KEY)
         
         prompt = f"""
         วิเคราะห์ข่าวนี้จาก Anthropic/Claude:
@@ -57,7 +57,12 @@ def analyze_news_with_ai(title, url):
         }}
         """
         
-        response = model.generate_content(prompt)
+        # ใช้โมเดล gemini-2.5-flash ตามเอกสารล่าสุด
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
+        
         raw_text = response.text.strip()
         if raw_text.startswith("```json"):
             raw_text = raw_text.replace("```json", "", 1).replace("```", "", 1).strip()
