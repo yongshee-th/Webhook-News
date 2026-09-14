@@ -35,13 +35,12 @@ def clean_title(title, url):
 
 def analyze_news_with_ai(title, url):
     if not GEMINI_API_KEY:
-        return "📌 บทความใหม่", "ไม่มีสรุปเนื้อหา (ไม่ได้ใส่ API Key)"
+        return "📌 บทความใหม่", "ไม่ได้ใส่ API Key ของ Gemini ไว้ที่ GitHub Secrets"
 
     try:
-        # เข้าไปดึงเนื้อหาคร่าวๆ จากหน้าข่าว
         res = requests.get(url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
-        text = " ".join([p.get_text() for p in soup.find_all("p")])[:1500] # เอาแค่ 1500 ตัวอักษรแรกก็พอให้ AI สรุป
+        text = " ".join([p.get_text() for p in soup.find_all("p")])[:1500] 
 
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -51,7 +50,7 @@ def analyze_news_with_ai(title, url):
         หัวข้อ: {title}
         เนื้อหา: {text}
         
-        ให้ตอบกลับมาเป็น JSON format ตามรูปแบบนี้เท่านั้น (ห้ามมี markdown หรือคำอธิบายอื่น):
+        ให้ตอบกลับมาเป็น JSON format ตามรูปแบบนี้เท่านั้น:
         {{
             "category": "หมวดหมู่ข่าวสั้นๆ พร้อมอีโมจิ (เช่น 🚀 อัปเดตฟีเจอร์, 🔬 งานวิจัย, 📢 ประกาศ, 🏢 ธุรกิจ)",
             "summary": "สรุปเนื้อหาข่าวเป็นภาษาไทยสั้นๆ เข้าใจง่าย ประมาณ 2-3 บรรทัด"
@@ -69,7 +68,7 @@ def analyze_news_with_ai(title, url):
         return data.get("category", "📌 ข่าวทั่วไป"), data.get("summary", "")
     except Exception as e:
         print(f"AI Analysis Failed: {e}")
-        return "📌 บทความ", "เนื้อหานี้ AI ไม่สามารถสรุปได้"
+        return "📌 บทความ", "ดึงเนื้อหาไม่สำเร็จ หรือ AI ขัดข้อง"
 
 def scrape_links(source):
     try:
@@ -105,8 +104,6 @@ def main():
 
     for name, title, link in new_articles:
         print(f"Processing & AI Analyzing: {title}")
-        
-        # ให้ AI สรุปและแบ่งหมวดหมู่
         category, summary = analyze_news_with_ai(title, link)
         
         color = 14392237 if "Anthropic" in name else 15129532 
@@ -114,7 +111,7 @@ def main():
             "embeds": [
                 {
                     "title": f"[{category}] {title}",
-                    "description": summary + "\n\n👉 **[อ่านรายละเอียดเต็มๆ ได้ที่นี่]("+link+")**",
+                    "description": summary + f"\n\n👉 **[อ่านรายละเอียดเต็มๆ ได้ที่นี่]({link})**",
                     "url": link,
                     "color": color,
                     "author": {
