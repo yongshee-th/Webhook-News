@@ -2,9 +2,10 @@ import os
 import json
 import requests
 from bs4 import BeautifulSoup
+import google.generativeai as genai
 
-# Webhook URL ของ Discord
 WEBHOOK_URL = "https://discord.com/api/webhooks/1549121441721753662/fZgMp6em_sJWaftCBRjupJ8KVO1aTPXjrFm8SWB-izx2TjYL3IZzPx-T2UeLGj1so-DB"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 SOURCES = [
     {"name": "Anthropic News", "url": "https://www.anthropic.com/news", "filter": "/news/"},
@@ -12,14 +13,14 @@ SOURCES = [
 ]
 
 SEEN_FILE = "seen.json"
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 def load_seen():
     if os.path.exists(SEEN_FILE):
         try:
             with open(SEEN_FILE, "r") as f:
                 return set(json.load(f))
-        except json.JSONDecodeError:
+        except:
             return set()
     return set()
 
@@ -28,47 +29,66 @@ def save_seen(seen):
         json.dump(list(seen), f, indent=4)
 
 def clean_title(title, url):
-    # กรณีเจอปุ่ม Read more หรือข้อความว่าง
-    if title.lower() in ["read more", "learn more", ""] or len(title) < 5:
-        basename = url.strip("/").split("/")[-1]
-        return basename.replace("-", " ").title()
-    
-    # กรณีเว็บ Anthropic ดูดเนื้อหากับวันที่มาติดกันจนยาวเกินไป
-    if len(title) > 80:
-        basename = url.strip("/").split("/")[-1]
-        return basename.replace("-", " ").title()
-
+    if title.lower() in ["read more", "learn more", ""] or len(title) < 5 or len(title) > 80:
+        return url.strip("/").split("/")[-1].replace("-", " ").title()
     return title
+
+def analyze_news_with_ai(title, url):
+    if not GEMINI_API_KEY:
+        return "📌 บทความใหม่", "ไม่มีสรุปเนื้อหา (ไม่ได้ใส่ API Key)"
+
+    try:
+        # เข้าไปดึงเนื้อหาคร่าวๆ จากหน้าข่าว
+        res = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        text = " ".join([p.get_text() for p in soup.find_all("p")])[:1500] # เอาแค่ 1500 ตัวอักษรแรกก็พอให้ AI สรุป
+
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        prompt = f"""
+        วิเคราะห์ข่าวนี้จาก Anthropic/Claude:
+        หัวข้อ: {title}
+        เนื้อหา: {text}
+        
+        ให้ตอบกลับมาเป็น JSON format ตามรูปแบบนี้เท่านั้น (ห้ามมี markdown หรือคำอธิบายอื่น):
+        {{
+            "category": "หมวดหมู่ข่าวสั้นๆ พร้อมอีโมจิ (เช่น 🚀 อัปเดตฟีเจอร์, 🔬 งานวิจัย, 📢 ประกาศ, 🏢 ธุรกิจ)",
+            "summary": "สรุปเนื้อหาข่าวเป็นภาษาไทยสั้นๆ เข้าใจง่าย ประมาณ 2-3 บรรทัด"
+        }}
+        """
+        
+        response = model.generate_content(prompt)
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text.replace("```json", "", 1).replace("```", "", 1).strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text.replace("```", "", 2).strip()
+
+        data = json.loads(raw_text)
+        return data.get("category", "📌 ข่าวทั่วไป"), data.get("summary", "")
+    except Exception as e:
+        print(f"AI Analysis Failed: {e}")
+        return "📌 บทความ", "เนื้อหานี้ AI ไม่สามารถสรุปได้"
 
 def scrape_links(source):
     try:
         response = requests.get(source["url"], headers=HEADERS, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
-        
-        # ใช้ Dictionary ดักลิงก์ซ้ำในหน้าเดียวกัน
         link_dict = {}
-        
         for a in soup.find_all("a", href=True):
             href = a["href"]
             if source["filter"] in href and not href.endswith(source["filter"]):
                 full_url = href if href.startswith("http") else f"{source['url'].split('/')[0]}//{source['url'].split('/')[2]}{href}"
-                
-                # พยายามหา Tag H (Heading) ก่อนเผื่อมีหัวข้อชัดเจน
                 heading = a.find(['h1', 'h2', 'h3', 'h4', 'h5'])
                 raw_title = heading.get_text(strip=True) if heading else a.get_text(strip=True)
-                
                 title = clean_title(raw_title, full_url)
                 
-                # ถ้าเคยดึงลิงก์นี้มาแล้วในลูป ให้เลือกใช้ชื่อข่าวที่ดูดีกว่า
-                if full_url in link_dict:
-                    if len(link_dict[full_url]) < len(title) and title.lower() != "read more":
-                         link_dict[full_url] = title
-                else:
+                if full_url not in link_dict or (len(link_dict[full_url]) < len(title) and title.lower() != "read more"):
                     link_dict[full_url] = title
                     
         return [(title, link) for link, title in link_dict.items()]
     except Exception as e:
-        print(f"Error scraping {source['name']}: {e}")
         return []
 
 def main():
@@ -84,20 +104,24 @@ def main():
                 seen.add(link)
 
     for name, title, link in new_articles:
-        print(f"Found new article: {title}")
-        color = 14392237 if "Anthropic" in name else 15129532 
+        print(f"Processing & AI Analyzing: {title}")
         
+        # ให้ AI สรุปและแบ่งหมวดหมู่
+        category, summary = analyze_news_with_ai(title, link)
+        
+        color = 14392237 if "Anthropic" in name else 15129532 
         msg = {
             "embeds": [
                 {
-                    "title": title,
+                    "title": f"[{category}] {title}",
+                    "description": summary + "\n\n👉 **[อ่านรายละเอียดเต็มๆ ได้ที่นี่]("+link+")**",
                     "url": link,
                     "color": color,
                     "author": {
-                        "name": f"🚀 ข่าวใหม่จาก {name}"
+                        "name": f"🤖 ข่าวใหม่จาก {name}"
                     },
                     "footer": {
-                        "text": "Automated by GitHub Actions"
+                        "text": "Summarized by AI • Automated by GitHub Actions"
                     }
                 }
             ]
@@ -106,7 +130,6 @@ def main():
 
     if new_articles:
         save_seen(seen)
-        print(f"Successfully saved {len(new_articles)} new articles to seen.json")
     else:
         print("No new articles found.")
 

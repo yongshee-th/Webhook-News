@@ -2,7 +2,8 @@ name: Anthropic & Claude News Fetcher
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    # เวลา UTC: รันตอนตี 1, 7 โมงเช้า, บ่ายโมง, และ 1 ทุ่ม (ตรงกับ 8:00, 14:00, 20:00, 02:00 เวลาไทย)
+    - cron: '0 1,7,13,19 * * *'
   workflow_dispatch:
 
 permissions:
@@ -26,6 +27,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Scraper
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python scraper.py
 
       - name: Commit and Push changes
